@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Component Viewer v3 — unit tests</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 1rem 1.5rem; line-height: 1.45; }
+    #summary { font-weight: 600; font-size: 1.1rem; margin-bottom: 0.75rem; }
+    #results { list-style: none; padding: 0; margin: 0; }
+    #results li { padding: 0.2rem 0; border-bottom: 1px solid #eee; }
+    #results li.pass { color: #0a7a0a; }
+    #results li.fail { color: #b00020; }
+    #fixture { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+  </style>
+</head>
+<body>
+  <div id="summary">Running…</div>
+  <ul id="results"></ul>
+  <div id="fixture"></div>
+
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="../component-viewer.js"></script>
+  <script>
+(function ($) {
+  'use strict';
+
+  var results = [];
+  var $summary = $('#summary');
+  var $results = $('#results');
+
+  function assert (cond, msg) {
+    if (!cond) {
+      throw new Error(msg || 'Assertion failed');
+    }
+  }
+
+  function test (name, fn) {
+    try {
+      fn();
+      results.push({ name: name, ok: true });
+    } catch (e) {
+      results.push({ name: name, ok: false, err: (e && e.message) ? e.message : String(e) });
+    }
+  }
+
+  function render () {
+    var pass = 0;
+    var i;
+    for (i = 0; i < results.length; i++) {
+      if (results[i].ok) {
+        pass++;
+      }
+    }
+    var fail = results.length - pass;
+    $summary.text(pass + ' passed, ' + fail + ' failed');
+    $summary.css('color', fail ? '#b00020' : '#0a7a0a');
+
+    $results.empty();
+    for (i = 0; i < results.length; i++) {
+      var r = results[i];
+      var $li = $('<li></li>')
+        .addClass(r.ok ? 'pass' : 'fail')
+        .text(r.name + (r.ok ? ' — pass' : ' — fail: ' + r.err));
+      $results.append($li);
+    }
+  }
+
+  $(function () {
+    var cv = $.fn.componentViewer;
+    var _cv = cv && cv._cv;
+    var U = _cv && _cv.Utils;
+
+    /* --- 1. Module registration --- */
+    test('_cv namespace exists', function () {
+      assert(_cv != null && typeof _cv === 'object', '$.fn.componentViewer._cv missing');
+    });
+
+    test('Utils with escHtml, isSafeResourceUrl, isNullish, str', function () {
+      assert(U != null, 'Utils missing');
+      assert(typeof U.escHtml === 'function', 'escHtml');
+      assert(typeof U.isSafeResourceUrl === 'function', 'isSafeResourceUrl');
+      assert(typeof U.isNullish === 'function', 'isNullish');
+      assert(typeof U.str === 'function', 'str');
+    });
+
+    test('renderers: image, video, audio, pdf, inline, markdown, html, error', function () {
+      var r = _cv.renderers;
+      assert(r && typeof r === 'object', 'renderers object');
+      ['image', 'video', 'audio', 'pdf', 'inline', 'markdown', 'html', 'error'].forEach(function (k) {
+        assert(typeof r[k] === 'function', 'renderer missing: ' + k);
+      });
+    });
+
+    test('features: carousel, slideshow, minimize, comments, poll, extract', function () {
+      var f = _cv.features;
+      assert(f && typeof f === 'object', 'features object');
+      ['carousel', 'slideshow', 'minimize', 'comments', 'poll', 'extract'].forEach(function (k) {
+        assert(typeof f[k] === 'function', 'feature missing: ' + k);
+      });
+    });
+
+    test('CV.Overlay exists', function () {
+      assert(_cv.Overlay != null, 'Overlay missing');
+    });
+
+    /* --- 2. Bundle parse --- */
+    test('$.fn.componentViewer is a function', function () {
+      assert(typeof cv === 'function', 'plugin not a function');
+    });
+
+    test('defaults has loop, toolbar, zoom, wcag', function () {
+      var d = cv.defaults;
+      assert(d && typeof d === 'object', 'defaults');
+      assert(Object.prototype.hasOwnProperty.call(d, 'loop'), 'loop');
+      assert(Object.prototype.hasOwnProperty.call(d, 'toolbar'), 'toolbar');
+      assert(Object.prototype.hasOwnProperty.call(d, 'zoom'), 'zoom');
+      assert(Object.prototype.hasOwnProperty.call(d, 'wcag'), 'wcag');
+    });
+
+    test('defaultStrings is an object', function () {
+      assert(cv.defaultStrings && typeof cv.defaultStrings === 'object', 'defaultStrings');
+    });
+
+    test('Icons is an object', function () {
+      assert(cv.Icons && typeof cv.Icons === 'object', 'Icons');
+    });
+
+    test('getActive is a function', function () {
+      assert(typeof cv.getActive === 'function', 'getActive');
+    });
+
+    /* --- 3. WCAG default --- */
+    test('defaults.wcag === true', function () {
+      assert(cv.defaults.wcag === true, 'wcag should default to true');
+    });
+
+    /* --- 5. Security --- */
+    test("isSafeResourceUrl('javascript:alert(1)') is false", function () {
+      assert(U.isSafeResourceUrl('javascript:alert(1)') === false, 'javascript: should be unsafe');
+    });
+
+    test("isSafeResourceUrl('https://example.com/img.jpg') is true", function () {
+      assert(U.isSafeResourceUrl('https://example.com/img.jpg') === true, 'https should be safe');
+    });
+
+    test('escHtml(script payload) does not contain raw <script>', function () {
+      var payload = '<' + 'script>alert(1)</' + 'script>';
+      var out = U.escHtml(payload);
+      assert(out.indexOf('<script>') === -1, 'script tag should be escaped');
+    });
+
+    /**
+     * Close animation removes .cv-visible inside a 300ms timeout in the bundle;
+     * assert after overlay teardown using a short delay.
+     */
+    var CLOSE_WAIT_MS = 350;
+
+    function pushResult (name, ok, err) {
+      results.push(ok ? { name: name, ok: true } : { name: name, ok: false, err: err || 'fail' });
+    }
+
+    function runOpenCloseAsync (thenFn) {
+      var name = 'open(0) shows overlay; close() removes cv-visible';
+      var $fx = $('#fixture');
+      try {
+        $fx.empty();
+        var $wrap = $('<div class="cv-test-gallery"></div>');
+        $wrap.append(
+          $('<a class="cv-item" href="https://picsum.photos/seed/a/100/100"></a>'),
+          $('<a class="cv-item" href="https://picsum.photos/seed/b/100/100"></a>')
+        );
+        $fx.append($wrap);
+
+        $wrap.componentViewer();
+        $wrap.componentViewer('open', 0);
+        assert($('.cv-overlay.cv-visible').length >= 1, 'expected .cv-overlay.cv-visible after open');
+
+        $wrap.componentViewer('close');
+
+        setTimeout(function () {
+          try {
+            assert($('.cv-overlay.cv-visible').length === 0, 'expected no .cv-overlay.cv-visible after close');
+            pushResult(name, true);
+          } catch (e2) {
+            pushResult(name, false, e2.message);
+          }
+          try {
+            $wrap.componentViewer('destroy');
+          } catch (e3) { /* ignore */ }
+          $fx.empty();
+          thenFn();
+        }, CLOSE_WAIT_MS);
+      } catch (e) {
+        pushResult(name, false, e.message);
+        $fx.empty();
+        thenFn();
+      }
+    }
+
+    function runStaticApiAsync (thenFn) {
+      var name = '$.componentViewer({ items }).componentViewer("open",0) then close';
+      try {
+        assert(typeof $.componentViewer === 'function', '$.componentViewer missing');
+
+        var $c = $.componentViewer({
+          items: [{ type: 'image', src: 'https://picsum.photos/100' }]
+        });
+        $c.appendTo('#fixture');
+
+        $c.componentViewer('open', 0);
+        assert($('.cv-overlay.cv-visible').length >= 1, 'static open should show overlay');
+
+        $c.componentViewer('close');
+
+        setTimeout(function () {
+          try {
+            assert($('.cv-overlay.cv-visible').length === 0, 'close should hide overlay');
+            pushResult(name, true);
+          } catch (e2) {
+            pushResult(name, false, e2.message);
+          }
+          try {
+            $c.componentViewer('destroy');
+          } catch (e3) { /* ignore */ }
+          $c.remove();
+          thenFn();
+        }, CLOSE_WAIT_MS);
+      } catch (e) {
+        pushResult(name, false, e.message);
+        thenFn();
+      }
+    }
+
+    runOpenCloseAsync(function () {
+      runStaticApiAsync(function () {
+        render();
+      });
+    });
+  });
+})(jQuery);
+  </script>
+</body>
+</html>
